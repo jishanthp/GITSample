@@ -1,0 +1,410 @@
+<?xml version="1.1" encoding="UTF-8"?>
+<SyncLM_AUTOSCRIPT xmlns="http://www.ibm.com/maximo" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" creationDateTime="2017-07-07T08:28:30-05:00" transLanguage="EN" baseLanguage="EN" messageID="1499434111029168352" maximoVersion="7 5 20120713-1120 V7503-157" event="0">
+  <LM_AUTOSCRIPTSet>
+    <AUTOSCRIPT>
+      <ACTION />
+      <AUTOSCRIPT>EFH_PO_FINAPPR</AUTOSCRIPT>
+      <AUTOSCRIPTID>1771</AUTOSCRIPTID>
+      <BINARYSCRIPTSOURCE />
+      <CATEGORY />
+      <CHANGEBY>30115571</CHANGEBY>
+      <CHANGEDATE>2017-07-07T08:16:23-05:00</CHANGEDATE>
+      <COMMENTS />
+      <CREATEDBY>MXINTADM</CREATEDBY>
+      <CREATEDBYEMAIL>Maximo.Administrator@luminant.com</CREATEDBYEMAIL>
+      <CREATEDBYID />
+      <CREATEDBYNAME />
+      <CREATEDBYPHONE />
+      <CREATEDDATE>2014-07-02T02:25:23-05:00</CREATEDDATE>
+      <DESCRIPTION>Po Financial Approver</DESCRIPTION>
+      <DESCRIPTION_LONGDESCRIPTION />
+      <LOGLEVEL>ERROR</LOGLEVEL>
+      <ORGID />
+      <OWNER>MXINTADM</OWNER>
+      <OWNEREMAIL>Maximo.Administrator@luminant.com</OWNEREMAIL>
+      <OWNERID />
+      <OWNERNAME />
+      <OWNERPHONE />
+      <SCHEDULEDSTATUS />
+      <SCRIPTLANGUAGE>javascript</SCRIPTLANGUAGE>
+      <SITEID />
+      <SOURCE>/*********************************************************************************************************************************************************************
+* NAME: EFH_PO_FINAPPR
+*    
+ *  HISTORY:
+*   DATE           	DEVELOPER     	BASE-R   		DESCRIPTION                                              		          WORKORDER NO.
+*   -------------          --------------- 		---------    ----------------------------------------------------------- 	                 ------------------     
+*   18/06/2014   	Sakthi Babu                    1.0         Launch povar for setting financial approver field.   
+*   20/12/2016   	Priyali Patil                      2.0         Set Invoice approver field with requestedby of poline   	 Major 1#16-337737
+				Rajiv Gunisitty				   having highest linecost. In case of polines having 
+											   same linecost, set invoice approver field blank &amp;
+											   its required and editable only for buyer persongroup.
+*  23/02/2017	Rajiv Gunisitty		  3.0	  Set Invoice Approver with Storeroom Owner and 
+											  Allow reorder when Storeroom is Null					Major 1#WO-16-337737Defect#30
+*27/02/2017        Rajiv Gunisitty                4.0         Allow REORDER for mentioned condition                                Major 1#WO-16-337737Defect#23-Enhancement 
+*30/03/2017        Rajiv Gunisitty                5.0         Script to run for AutoCreated PO's	                               Major 1#WO-16-337737Defect#23-Enhancement 
+*01/06/2017        Hitika Arora                   6.0         Financial Approver should not be mandatory while revising PO 
+*07/07/2017        Sonam Lulla                  7.0         Modified for null check on fetching Storeloc on Poline                 INC0257883                     
+*********************************************************************************************************************************************************************************/
+importClass(Packages.psdi.mbo.MboConstants);
+importClass(Packages.psdi.mbo.Mbo);
+importClass(Packages.psdi.mbo.MboSetRemote);
+importClass(Packages.psdi.server.MXServer);
+importClass(Packages.psdi.mbo.SqlFormat);
+importClass(Packages.psdi.util.logging.MXLogger);
+importClass(Packages.psdi.util.logging.MXLoggerFactory);
+importClass(Packages.java.lang.System);
+
+
+var mboName = mbo.getName();
+if(mboName!=null &amp;&amp; mboName.equalsIgnoreCase("PO") ) //Major 1#DEFECT35-Removed is.Interactive Check
+{
+	var polineSet=mbo.getMboSet("POLINE");
+	var status=mbo.getString("STATUS");
+	var finApprover=mbo.getString("LM_FIN_APPROVER");
+	var invApprover=mbo.getString("LM_INV_APPROVER");
+	var firstSave=mbo.getInt("EFH_FIRSTSAVE");
+	
+	var stdserv=0,item=0;// Major 1#WO-16-337737Defect#23-Enhancement 
+	var site=mbo.getString("SITEID");// Major 1#WO-16-337737Defect#23-Enhancement 
+
+	if(((finApprover==null || (finApprover!=null &amp;&amp; finApprover.length()==0)) || (invApprover==null || (invApprover!=null &amp;&amp; invApprover.length()==0))) &amp;&amp; (status.equalsIgnoreCase("WAPPR") || status.equalsIgnoreCase("PNDREV")))//invApprover check added during Major1Enhancement
+	{
+		var prStoreroom='';
+		if(firstSave==0 &amp;&amp; polineSet!=null &amp;&amp; polineSet.getMbo(0)!=null)
+		{
+			polineSet.moveFirst();
+			var prRequestedby=null;
+			var prnum=null;
+			var polineCount=polineSet.count();
+			var i=0;// Major1Enhancement
+			//FUNCTION WHICH IS CHECKING FOR POLINES CREATED FROM THE SAME PR
+			if(checkSamePR(polineSet,prnum, polineCount) &amp;&amp; polineSet.getMbo(0).getMboSet("PRLINE").getMbo(0)!=null &amp;&amp; polineSet.getMbo(0).getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0)!=null)
+			{
+				prRequestedby=polineSet.getMbo(0).getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0).getString("REQUESTEDBY");
+				//#WO-16-337757-Added &amp;&amp; prStoreroom condition to check if the storeroom is empty as resolution to defect# 30
+					poLineMbo = polineSet.getMbo(0);
+						if(poLineMbo!= null)
+					{
+						prLineSet = poLineMbo.getMboSet("PRLINE");
+						if( prLineSet  != null &amp;&amp; !prLineSet.isEmpty() )
+						prStoreroom = prLineSet.getMbo(0).getString("STORELOC");
+					}
+				if(prRequestedby=='REORDER' &amp;&amp; prStoreroom!='')
+				{  
+					//Set Financial Approver with Requested by
+					mbo.setValue("LM_FIN_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+					//#WO-16-337757-Added isEmpty condition to check if the storeroom is empty as resolution to defect# 30
+					if(!polineSet.getMbo(0).getMboSet("LM_LOCATION").isEmpty())
+						{
+							//Major 1#WO-16-337737Defect#23-Enhancement 
+							poLine=polineSet.getMbo(i)
+							
+							while( poLine != null)
+							{
+								var linetype=poLine.getString("LINETYPE");
+								var itemnum=poLine.getString("ITEMNUM");
+								if(linetype=='STDSERVICE' &amp;&amp; itemnum=='REPAIR-ITEM' &amp;&amp; site=='CP')
+									stdserv++;
+								if(linetype=='ITEM')
+									item++;
+								poLine=polineSet.getMbo(++i)
+							}
+							  
+							// To allow REORDER as Invoice Approver based on below condition #Major 1#WO-16-337737Defect#23-Enhancement 
+							if((stdserv ==1 &amp;&amp; item == 1) &amp;&amp; site=='CP')
+							{
+								mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+								
+							}
+							else
+							{//Set Invoice Approver with Storeroom owner value when requested by is REORDER Major 1#WO-16-337737Defect#23-Enhancement
+								var invappr =polineSet.getMbo(0).getMboSet("LM_LOCATION").getMbo(0).getString("INVOWNER");
+								mbo.setValue("LM_INV_APPROVER",invappr,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+							}
+						}			
+						else
+						{
+							mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+						}
+					mbo.setValue("EFH_FIRSTSAVE", true,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);						
+				}
+				else
+				{
+					mbo.setValue("LM_FIN_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+					mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+					mbo.setValue("EFH_FIRSTSAVE", true,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);		
+				}
+				
+			}
+			else
+			{
+				//#WO-16-337757-FUNCTION WHICH IS CHECKING FOR POLINES CREATED FROM DIFFERENT PR'S HAVING SIMILAR LINECOST
+				if(attainRequestedByforsimilarLincost(polineSet))
+				{
+					prRequestedby=attainRequestedByforGreaterLincecost(polineSet);
+					
+					//#WO-16-337757-TO CHECK CURRENTUSER IS BUYER OR NOT
+					var currentuser=mbo.getUserInfo();
+					mbosetPersonGroupTeam = MXServer.getMXServer().getMboSet("PERSONGROUPTEAM", mbo.getUserInfo());
+					mbosetPersonGroupTeam.setWhere("PERSONGROUP = 'BUYER' and RESPPARTY  = '" + currentuser.getUserName() + "'");
+					
+						 
+					if(prRequestedby!=null &amp;&amp; prRequestedby.length()&gt;0)
+					{
+						// #WO-16-337757-Added &amp;&amp; prStoreroom condition to check if the storeroom is empty as resolution to defect# 30
+						poLineMbo = polineSet.getMbo(0);
+						if(poLineMbo!= null)
+					{
+						prLineSet = poLineMbo.getMboSet("PRLINE");
+						if( prLineSet  != null &amp;&amp; !prLineSet.isEmpty() )
+						prStoreroom = prLineSet.getMbo(0).getString("STORELOC");
+					}
+						if(prRequestedby=='REORDER' &amp;&amp; prStoreroom!='')
+						{  
+							//Set Financial Approver with Requested by
+							mbo.setValue("LM_FIN_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+							// #WO-16-337757-Added isEmpty condition to check if the storeroom is empty as resolution to defect# 30
+							if(!polineSet.getMbo(0).getMboSet("LM_LOCATION").isEmpty())
+								{
+									poLine=polineSet.getMbo(i)
+					
+									while( poLine != null)
+									{
+										var linetype=poLine.getString("LINETYPE");
+										var itemnum=poLine.getString("ITEMNUM");
+										if(linetype=='STDSERVICE' &amp;&amp; itemnum=='REPAIR-ITEM' &amp;&amp; site=='CP')
+											stdserv++;
+										if(linetype=='ITEM')
+											item++;
+										poLine=polineSet.getMbo(++i)
+									}
+									  
+									// To allow REORDER as Invoice Approver based on below condition #Major 1#WO-16-337737Defect#23-Enhancement
+									if((stdserv ==1 &amp;&amp; item == 1) &amp;&amp; site=='CP')
+									{
+										mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+										
+									}
+									else
+									{//Set Invoice Approver with Storeroom owner value when requested by is REORDER Major 1#WO-16-337737Defect#23-Enhancement
+										var invappr =polineSet.getMbo(0).getMboSet("LM_LOCATION").getMbo(0).getString("INVOWNER");
+										mbo.setValue("LM_INV_APPROVER",invappr,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+									}
+								}
+								else
+								{
+									mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+								}
+							mbo.setValue("EFH_FIRSTSAVE", true,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);						
+						}
+						else
+						{
+							mbo.setValue("LM_FIN_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);	
+							if (mbosetPersonGroupTeam.getMbo(0)!=null &amp;&amp; polineSet!=null &amp;&amp; polineSet.getMbo(0)!=null)
+								{
+									mbo.setFieldFlag("LM_INV_APPROVER",MboConstants.REQUIRED,true);//#WO-16-337757-To make the filed required only for Buyer
+								} 
+							mbo.setValue("EFH_FIRSTSAVE", true,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+						}
+					}
+				}
+				else
+				{
+					 if(attainRequestedByforGreaterLincecost(polineSet)!=null)
+				    {
+						prRequestedby=attainRequestedByforGreaterLincecost(polineSet);
+						if(prRequestedby!=null &amp;&amp; prRequestedby.length()&gt;0)
+						{
+							// #WO-16-337757-Added &amp;&amp; prStoreroom condition to check if the storeroom is empty as resolution to defect# 30
+								poLineMbo = polineSet.getMbo(0);
+						if(poLineMbo!= null)
+					{
+						prLineSet = poLineMbo.getMboSet("PRLINE");
+						if( prLineSet  != null &amp;&amp; !prLineSet.isEmpty() )
+						prStoreroom = prLineSet.getMbo(0).getString("STORELOC");
+					}
+							
+							if(prRequestedby=='REORDER' &amp;&amp; prStoreroom!='')
+							{  
+								//Set Financial Approver with Requested by
+								mbo.setValue("LM_FIN_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+								//#WO-16-337757- Added isEmpty condition to check if the storeroom is empty as resolution to defect# 30
+								if(!polineSet.getMbo(0).getMboSet("LM_LOCATION").isEmpty())
+									{
+										poLine=polineSet.getMbo(i)
+						
+										while( poLine != null)
+										{
+											var linetype=poLine.getString("LINETYPE");
+											var itemnum=poLine.getString("ITEMNUM");
+											if(linetype=='STDSERVICE' &amp;&amp; itemnum=='REPAIR-ITEM' &amp;&amp; site=='CP')
+												stdserv++;
+											if(linetype=='ITEM')
+												item++;
+											poLine=polineSet.getMbo(++i)
+										}
+										  
+										// To allow REORDER as Invoice Approver based on below condition #Major 1#WO-16-337737Defect#23-Enhancement
+										if((stdserv ==1 &amp;&amp; item == 1) &amp;&amp; site=='CP')
+										{
+											mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+											
+										}
+										else
+										{//Set Invoice Approver with Storeroom owner value when requested by is REORDER
+											var invappr =polineSet.getMbo(0).getMboSet("LM_LOCATION").getMbo(0).getString("INVOWNER");
+											mbo.setValue("LM_INV_APPROVER",invappr,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+										}
+									}
+									else
+									{
+										mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+									}
+								mbo.setValue("EFH_FIRSTSAVE", true,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);						
+							}
+							else
+							{
+								mbo.setValue("LM_FIN_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);	
+								mbo.setValue("LM_INV_APPROVER",prRequestedby,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);	
+								mbo.setValue("EFH_FIRSTSAVE", true,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+							}
+						}
+					}
+//01/06/2017        Hitika Arora    added status condition below
+					else 
+					{
+						if(checkNoPR(polineSet, polineCount) &amp;&amp; (finApprover==null || (finApprover!=null &amp;&amp; finApprover.length()==0)) &amp;&amp; mbo.isNew() &amp;&amp; (mbo.getOwner()==null) &amp;&amp; (!status.equalsIgnoreCase("PNDREV")))
+						{
+							errorgroup="po";
+							errorkey="EFH_FinApproverReq";
+						}
+					}
+				}
+				
+				
+				
+			}
+			polineSet.close();
+		}
+		
+	}
+	else if(finApprover!=null &amp;&amp; finApprover.length()&gt;0 &amp;&amp; invApprover!=null &amp;&amp; invApprover.length()&gt;0 &amp;&amp; firstSave==0 &amp;&amp; mbo.toBeSaved())//#DEFECT35-Added invApprover to this condition
+			mbo.setValue("EFH_FIRSTSAVE", true,MboConstants.NOACCESSCHECK+MboConstants.NOVALIDATION);
+}
+
+//#WO-16-337757-FUNCTION WHICH IS CHECKING FOR POLINES CREATED FROM DIFFERENT PR'S HAVING GREATER LINECOST
+function attainRequestedByforGreaterLincecost(polineSet) 
+{
+	var reqBy=null;
+	var poLine=null;
+	var lineCost=0.0;
+	for(var i=0;(poLine=polineSet.getMbo(i))!=null;i++)
+	{
+		if(poLine.getMboSet("PRLINE").getMbo(0) !=null &amp;&amp; poLine.getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0)!=null)
+		{
+			if(poLine.getDouble("linecost")&gt;lineCost){
+			lineCost=poLine.getDouble("linecost");
+			reqBy=poLine.getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0).getString("REQUESTEDBY");
+		}
+	 }
+	}
+	return reqBy;
+}
+//#WO-16-337757-FUNCTION WHICH IS CHECKING FOR POLINES CREATED FROM DIFFERENT PR'S HAVING SIMILAR LINECOST
+function attainRequestedByforsimilarLincost(polineSet) 
+{
+	var poLine=null;
+	var temp=0;
+	var lineCost=0.0;
+	var flag=false;
+	for(var i=0;(poLine=polineSet.getMbo(i))!=null;i++)
+	{
+		if(poLine.getMboSet("PRLINE").getMbo(0) !=null &amp;&amp; poLine.getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0)!=null)
+		{
+			if(poLine.getDouble("linecost")&gt;lineCost)//Checking Poline having greatest linecost
+			{
+				lineCost=poLine.getDouble("linecost");
+				temp=i;
+			}
+		}
+	}
+	for(var i=0;(poLine=polineSet.getMbo(i))!=null;i++)
+	{
+		if(poLine.getMboSet("PRLINE").getMbo(0) !=null &amp;&amp; poLine.getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0)!=null)
+		{
+			if(poLine.getDouble("linecost")==lineCost &amp;&amp; i!=temp)//Checking other Poline having greatest linecost
+			{
+				flag=true;
+			}
+		}
+	}
+
+	return flag;
+}
+
+//FUNCTION WHICH IS CHECKING FOR POLINES CREATED FROM THE SAME PR
+function checkSamePR(polineSet, prNum, polineCount) 
+{
+	var match=false;
+	var poLine=null;
+	var existingCount=0;
+	if(polineSet.getMbo(0).getMboSet("PRLINE").getMbo(0)!=null &amp;&amp; polineSet.getMbo(0).getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0)!=null)
+		prNum=polineSet.getMbo(0).getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0).getString("PRNUM");
+	for(var i=0;(poLine=polineSet.getMbo(i))!=null;i++)
+	{
+		if(poLine.getMboSet("PRLINE").getMbo(0) !=null &amp;&amp; poLine.getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0))
+		{
+			var pr=poLine.getMboSet("PRLINE").getMbo(0).getMboSet("PR").getMbo(0);
+			if(pr!=null &amp;&amp; pr.getString("PRNUM").equalsIgnoreCase(prNum))
+				existingCount++;
+		}
+	}
+	if(polineCount==existingCount)
+		match=true;
+	return match;
+}
+
+function checkNoPR(polineSet, polineCount) 
+{
+	var match=false;
+	var poLine=null;
+	var existingCount=0;
+	for(var i=0;(poLine=polineSet.getMbo(i))!=null;i++)
+	{
+		if(poLine.getMboSet("PRLINE").getMbo(0) == null)
+			existingCount++;
+	}
+	if(polineCount==existingCount)
+		match=true;
+	return match;
+}</SOURCE>
+      <STATUS maxvalue="Production">Active</STATUS>
+      <STATUSDATE>2014-10-21T11:40:33-05:00</STATUSDATE>
+      <STDERR />
+      <STDOUT />
+      <USERDEFINED>1</USERDEFINED>
+      <VERSION />
+      <SCRIPTLAUNCHPOINT>
+        <ACTIONDESC />
+        <ACTIONNAME />
+        <ACTIVE>1</ACTIVE>
+        <ADD>1</ADD>
+        <ATTRIBUTENAME />
+        <AUTOSCRIPTNP />
+        <CONDITION>:status in ('WAPPR','PNDREV')</CONDITION>
+        <DELETE>0</DELETE>
+        <DESCRIPTION>Po Financial Approver</DESCRIPTION>
+        <INIT>1</INIT>
+        <LAUNCHPOINTNAME>EFH_PO_FINAPPR</LAUNCHPOINTNAME>
+        <LAUNCHPOINTTYPE>OBJECT</LAUNCHPOINTTYPE>
+        <OBJECTEVENT>7</OBJECTEVENT>
+        <OBJECTNAME>PO</OBJECTNAME>
+        <SCRIPTLAUNCHPOINTID>1831</SCRIPTLAUNCHPOINTID>
+        <SCRIPTORIGIN>NEW</SCRIPTORIGIN>
+        <UPDATE>1</UPDATE>
+      </SCRIPTLAUNCHPOINT>
+    </AUTOSCRIPT>
+  </LM_AUTOSCRIPTSet>
+</SyncLM_AUTOSCRIPT>
+
